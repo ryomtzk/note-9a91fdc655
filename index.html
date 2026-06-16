@@ -104,12 +104,68 @@
     border-radius: 999px;
     letter-spacing: 0.04em;
   }
-  .row-grid {
+  .row .ex { margin-bottom: 12px; }
+
+  /* 同じ種目のセット小行をまとめる */
+  .set-lines { display: flex; flex-direction: column; gap: 12px; }
+  .set-line { position: relative; padding-left: 24px; }
+  /* 数値3列（重量/レップ/セット） */
+  .set-grid {
     display: grid;
     grid-template-columns: 1fr 1fr 1fr;
     gap: 12px;
   }
-  .row .ex { grid-column: 1 / -1; }
+  /* 2行目以降はラベルを隠して重複を防ぐ */
+  .set-line:not(:first-child) label { display: none; }
+  .set-num {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 18px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 34px;
+    text-align: center;
+  }
+  /* セット2行目以降は番号の上下位置を入力欄に合わせる */
+  .set-line:not(:first-child) .set-num { line-height: 44px; }
+  .set-del {
+    position: absolute;
+    top: 0;
+    right: 0;
+    background: var(--surface);
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .set-del:hover { color: var(--danger); border-color: var(--danger); }
+  .set-del:disabled { opacity: 0; pointer-events: none; }
+
+  /* セットを追加するボタン（種目を追加より一回り小さい） */
+  .add-set {
+    width: 100%;
+    background: transparent;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    color: var(--muted);
+    padding: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    margin-top: 12px;
+  }
+  .add-set:hover { border-color: var(--accent); color: var(--accent); }
+  .add-set .plus { color: var(--accent); font-weight: 800; }
   .row-del {
     position: absolute;
     top: -9px;
@@ -229,6 +285,54 @@
   }
   .item-stats b { color: var(--accent); font-weight: 700; font-size: 14px; }
 
+  /* 種目ごとのブロック（同名種目はまとめて見出し1回） */
+  .exercise-block {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .exercise-block:last-child { border-bottom: none; }
+  .exercise-name { font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+  .set-rows { display: flex; flex-direction: column; gap: 4px; }
+  .set-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .set-index { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+  /* 週ナビ */
+  .week-nav {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 14px;
+  }
+  .week-prev, .week-next {
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: var(--text);
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .week-prev:hover, .week-next:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .week-range {
+    flex: 1;
+    text-align: center;
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text);
+  }
+
   .empty, .loading {
     color: var(--muted);
     text-align: center;
@@ -238,7 +342,8 @@
 
   @media (max-width: 480px) {
     .grid { grid-template-columns: 1fr; }
-    .row-grid { grid-template-columns: 1fr 1fr 1fr; }
+    /* 種目名はフル幅、数値は3列のまま維持 */
+    .set-grid { grid-template-columns: 1fr 1fr 1fr; }
   }
 </style>
 </head>
@@ -282,6 +387,14 @@
     <h2>これまでの記録</h2>
     <span class="count" id="count"></span>
   </div>
+
+  <!-- 週の切り替え -->
+  <div class="week-nav">
+    <button class="week-prev" id="weekPrevBtn" type="button">‹ 前の週</button>
+    <span class="week-range" id="weekRange"></span>
+    <button class="week-next" id="weekNextBtn" type="button">次の週 ›</button>
+  </div>
+
   <div id="list">
     <div class="loading">読み込み中...</div>
   </div>
@@ -297,7 +410,10 @@
 
   let rowSeq = 0; // 行の通し番号（DOM識別用）
 
-  // 種目の行を1つ追加する
+  let allRecords = [];  // GETで取得した全記録（週切替時に再fetchしないで使い回す）
+  let weekOffset = 0;   // 表示中の週のオフセット（0=今週, -1=先週, +1=来週）
+
+  // 種目の行を1つ追加する（種目名は行頭に1回、セット小行は複数持てる）
   function addRow() {
     rowSeq++;
     const id = rowSeq;
@@ -307,11 +423,42 @@
     div.innerHTML = `
       <span class="row-num"></span>
       <button type="button" class="row-del" aria-label="この種目を削除">✕</button>
-      <div class="row-grid">
-        <div class="field ex">
-          <label>種目</label>
-          <input type="text" class="in-exercise" placeholder="例: ベンチプレス" autocomplete="off">
-        </div>
+      <div class="field ex">
+        <label>種目</label>
+        <input type="text" class="in-exercise" placeholder="例: ベンチプレス" autocomplete="off">
+      </div>
+      <div class="set-lines"></div>
+      <button type="button" class="add-set" aria-label="セットを追加">
+        <span class="plus">＋</span> もう1セット
+      </button>`;
+    $("rows").appendChild(div);
+
+    div.querySelector(".row-del").addEventListener("click", function () {
+      div.remove();
+      renumberRows();
+    });
+
+    div.querySelector(".add-set").addEventListener("click", function () {
+      addSetLine(div, true);
+    });
+
+    // 生成直後に最初のセット小行を1つ用意する（フォーカスはしない）
+    addSetLine(div, false);
+
+    renumberRows();
+    return div;
+  }
+
+  // 種目の行にセット小行を1つ追加する
+  // focus が true のとき、追加した小行の重量入力にフォーカスする
+  function addSetLine(row, focus) {
+    const container = row.querySelector(".set-lines");
+    const line = document.createElement("div");
+    line.className = "set-line";
+    line.innerHTML = `
+      <span class="set-num"></span>
+      <button type="button" class="set-del" aria-label="このセットを削除">✕</button>
+      <div class="set-grid">
         <div class="field">
           <label>重量 (kg)</label>
           <input type="number" class="in-weight" step="0.1" min="0" placeholder="60.0" inputmode="decimal">
@@ -325,15 +472,28 @@
           <input type="number" class="in-sets" step="1" min="0" placeholder="3" inputmode="numeric">
         </div>
       </div>`;
-    $("rows").appendChild(div);
+    container.appendChild(line);
 
-    div.querySelector(".row-del").addEventListener("click", function () {
-      div.remove();
-      renumberRows();
+    line.querySelector(".set-del").addEventListener("click", function () {
+      line.remove();
+      renumberSets(row);
     });
 
-    renumberRows();
-    return div;
+    renumberSets(row);
+
+    if (focus) {
+      line.querySelector(".in-weight").focus();
+    }
+    return line;
+  }
+
+  // セット番号を振り直し、小行が1つだけのときは削除ボタンを無効化
+  function renumberSets(row) {
+    const lines = row.querySelectorAll(".set-line");
+    lines.forEach(function (line, i) {
+      line.querySelector(".set-num").textContent = (i + 1);
+      line.querySelector(".set-del").disabled = (lines.length === 1);
+    });
   }
 
   // 行番号を振り直し、行が1つだけのときは削除ボタンを無効化
@@ -361,7 +521,7 @@
     el.className = "msg " + (type || "");
   }
 
-  // 一覧を取得して描画
+  // 一覧を取得して保持し、今表示中の週を描画する
   async function loadRecords() {
     const list = $("list");
     try {
@@ -369,37 +529,51 @@
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || "取得に失敗しました");
 
-      const records = data.records || [];
-      $("count").textContent = records.length + " 件";
-
-      if (records.length === 0) {
-        list.innerHTML = '<div class="empty">まだ記録がありません。最初の1件を書き込みましょう。</div>';
-        return;
-      }
-
-      // 日付＋名前ごとにグループ化（recordsは新しい順に並んでいる）
-      const groups = [];
-      const index = {};
-      records.forEach(function (r) {
-        const dateLabel = formatDate(r.date);
-        const key = dateLabel + "|" + r.name;
-        if (!(key in index)) {
-          index[key] = groups.length;
-          groups.push({ date: dateLabel, name: r.name, items: [] });
-        }
-        groups[index[key]].items.push(r);
-      });
-
-      list.innerHTML = groups.map(renderGroup).join("");
+      allRecords = data.records || [];
+      renderCurrentWeek();
     } catch (err) {
       list.innerHTML = '<div class="empty">読み込みに失敗しました。<br>' +
         'URLの設定とネットワークを確認してください。</div>';
     }
   }
 
+  // 記録を 日付＋名前 → 種目 → セット配列 の3階層にまとめる
+  // recordsは新しい順に並んでいる前提で、出現順をそのまま保持する。
+  function groupRecords(records) {
+    const groups = [];
+    const groupIndex = {};   // "dateLabel|name" → groups内の位置
+    records.forEach(function (r) {
+      const dateLabel = formatDate(r.date);
+      const key = dateLabel + "|" + r.name;
+      if (!(key in groupIndex)) {
+        groupIndex[key] = groups.length;
+        groups.push({ date: dateLabel, name: r.name, exercises: [], exIndex: {} });
+      }
+      const g = groups[groupIndex[key]];
+
+      // 同じグループ内で同名種目はまとめ、セットだけ積み増す
+      const exKey = String(r.exercise);
+      if (!(exKey in g.exIndex)) {
+        g.exIndex[exKey] = g.exercises.length;
+        g.exercises.push({ exercise: r.exercise, sets: [] });
+      }
+      g.exercises[g.exIndex[exKey]].sets.push(r);
+    });
+
+    // allRecords は新しい順。各種目内のセットは入力順（古い→新しい）にして
+    // 「1セット目」が最初に入れたセットを指すようにする。
+    // グループ（日・人）や種目の並び自体は新しい順のまま変えない。
+    groups.forEach(function (g) {
+      g.exercises.forEach(function (ex) {
+        ex.sets.reverse();
+      });
+    });
+    return groups;
+  }
+
   // 1グループ（同じ日・同じ人）のHTMLを組み立て
   function renderGroup(g) {
-    const rows = g.items.map(renderItemRow).join("");
+    const body = g.exercises.map(renderExerciseBlock).join("");
     return `
       <div class="group">
         <div class="group-head">
@@ -407,20 +581,31 @@
             <span class="who">${escapeHtml(g.name)}</span>
             <span class="group-date">${escapeHtml(g.date)}</span>
           </div>
-          <span class="group-count">${g.items.length} 種目</span>
+          <span class="group-count">${g.exercises.length} 種目</span>
         </div>
-        <div class="group-body">${rows}</div>
+        <div class="group-body">${body}</div>
       </div>`;
   }
 
-  // グループ内の種目1行
-  function renderItemRow(r) {
-    const weight = (r.weight === "" || r.weight === null) ? "-" : r.weight;
-    const reps = (r.reps === "" || r.reps === null) ? "-" : r.reps;
-    const sets = (r.sets === "" || r.sets === null) ? "-" : r.sets;
+  // 種目1つのブロック（種目名を1回 + セットを並べる）
+  function renderExerciseBlock(ex) {
+    const rows = ex.sets.map(renderSetRow).join("");
     return `
-      <div class="item">
-        <div class="item-ex">${escapeHtml(r.exercise)}</div>
+      <div class="exercise-block">
+        <div class="exercise-name">${escapeHtml(ex.exercise)}</div>
+        <div class="set-rows">${rows}</div>
+      </div>`;
+  }
+
+  // 種目内のセット1行
+  function renderSetRow(s, i) {
+    // null / undefined / 空文字 はまとめて "-" に（GASがフィールドを省略する場合に備える）
+    const weight = (s.weight == null || s.weight === "") ? "-" : s.weight;
+    const reps = (s.reps == null || s.reps === "") ? "-" : s.reps;
+    const sets = (s.sets == null || s.sets === "") ? "-" : s.sets;
+    return `
+      <div class="set-row">
+        <span class="set-index">${i + 1}セット目</span>
         <div class="item-stats">
           <span><b>${escapeHtml(String(weight))}</b> kg</span>
           <span><b>${escapeHtml(String(reps))}</b> レップ</span>
@@ -465,17 +650,114 @@
     return s;
   }
 
-  // 入力済みの全行を集める（種目が空の行は除外）
+  // 日付文字列から年・月・日を数値で取り出す（TZズレを避けるため文字列から直接読む）
+  // YYYY-MM-DD でも "Tue Jun 16 2026 ..." でも受け取れる。解釈できなければ null。
+  function parseYMD(value) {
+    if (!value) return null;
+    const s = String(value);
+
+    // YYYY-MM-DD 形式
+    const iso = s.match(/(\d{4})-(\d{1,2})-(\d{1,2})/);
+    if (iso) {
+      return { y: Number(iso[1]), m: Number(iso[2]), d: Number(iso[3]) };
+    }
+
+    // "Tue Jun 16 2026 ..." のような英語形式
+    const months = {
+      Jan: 1, Feb: 2, Mar: 3, Apr: 4, May: 5, Jun: 6,
+      Jul: 7, Aug: 8, Sep: 9, Oct: 10, Nov: 11, Dec: 12
+    };
+    const en = s.match(/\b([A-Z][a-z]{2})\s+(\d{1,2})\s+(\d{4})\b/);
+    if (en && months[en[1]]) {
+      return { y: Number(en[3]), m: months[en[1]], d: Number(en[2]) };
+    }
+
+    return null;
+  }
+
+  // 指定日が属する週の月曜0時(UTC)のミリ秒を返す（月曜始まり、UTC基準）
+  function mondayOf(y, m, d) {
+    const t = Date.UTC(y, m - 1, d);
+    const dow = new Date(t).getUTCDay(); // 0=日 … 6=土
+    const offset = (dow === 0) ? 6 : dow - 1;
+    return t - offset * 86400000;
+  }
+
+  // 今表示中の週の月曜0時(UTC)を返す（weekOffset週ぶんずらす）
+  function currentWeekMonday() {
+    const now = new Date();
+    const ymd = {
+      y: now.getFullYear(),
+      m: now.getMonth() + 1,
+      d: now.getDate()
+    };
+    const monday = mondayOf(ymd.y, ymd.m, ymd.d);
+    return monday + weekOffset * 7 * 86400000;
+  }
+
+  // 指定週（月曜0時〜次の月曜0時の手前）に入る記録だけを返す
+  function recordsInWeek(monday) {
+    const end = monday + 7 * 86400000;
+    return allRecords.filter(function (r) {
+      const ymd = parseYMD(r.date);
+      if (!ymd) return false;
+      const t = Date.UTC(ymd.y, ymd.m - 1, ymd.d);
+      return monday <= t && t < end;
+    });
+  }
+
+  // 週の範囲を "6/15(月) 〜 6/21(日)" の形式で返す（UTC基準）
+  function formatWeekRange(monday) {
+    const days = ["日", "月", "火", "水", "木", "金", "土"];
+    const sunday = monday + 6 * 86400000;
+    const fmt = function (t) {
+      const dt = new Date(t);
+      const mo = dt.getUTCMonth() + 1;
+      const da = dt.getUTCDate();
+      const w = days[dt.getUTCDay()];
+      return `${mo}/${da}(${w})`;
+    };
+    return `${fmt(monday)} 〜 ${fmt(sunday)}`;
+  }
+
+  // 今表示中の週を描画する（再fetchはしない）
+  function renderCurrentWeek() {
+    const list = $("list");
+    const monday = currentWeekMonday();
+    $("weekRange").textContent = formatWeekRange(monday);
+
+    const subset = recordsInWeek(monday);
+    $("count").textContent = subset.length + " 件";
+
+    if (subset.length === 0) {
+      list.innerHTML = '<div class="empty">この週の記録はありません。</div>';
+      return;
+    }
+
+    const groups = groupRecords(subset);
+    list.innerHTML = groups.map(renderGroup).join("");
+  }
+
+  // 入力済みの全行を集める（種目が空の行は丸ごと除外）
+  // 1種目に複数セットがあるので、種目×セットの2重ループで1セット=1itemにする
   function collectItems() {
     const items = [];
     $("rows").querySelectorAll(".row").forEach(function (row) {
       const exercise = row.querySelector(".in-exercise").value.trim();
-      if (!exercise) return;
-      items.push({
-        exercise: exercise,
-        weight: row.querySelector(".in-weight").value,
-        reps: row.querySelector(".in-reps").value,
-        sets: row.querySelector(".in-sets").value
+      if (!exercise) return; // 種目名が空の行はスキップ
+
+      row.querySelectorAll(".set-line").forEach(function (line) {
+        const weight = line.querySelector(".in-weight").value;
+        const reps = line.querySelector(".in-reps").value;
+        const sets = line.querySelector(".in-sets").value;
+        // 重量・レップ・セットが全部空の小行はスキップ
+        if (weight === "" && reps === "" && sets === "") return;
+        items.push({
+          exercise: exercise,
+          weight: weight,
+          reps: reps,
+          sets: sets
+        });
       });
     });
     return items;
@@ -485,7 +767,14 @@
   async function submit() {
     const items = collectItems();
     if (items.length === 0) {
-      showMsg("種目を1つ以上入力してください。", "err");
+      // 種目名は入っているのに数値が空の場合は、その点を案内する
+      const hasExercise = Array.from($("rows").querySelectorAll(".in-exercise"))
+        .some(function (input) { return input.value.trim() !== ""; });
+      if (hasExercise) {
+        showMsg("重量・レップ・セットのいずれかを入力してください。", "err");
+      } else {
+        showMsg("種目を1つ以上入力してください。", "err");
+      }
       return;
     }
 
@@ -512,6 +801,21 @@
       // 行をリセットして1行だけに戻す（名前と日付は残す）
       $("rows").innerHTML = "";
       addRow();
+      // 送信した日付が属する週を表示して、登録直後の記録が見えるようにする。
+      // 今日の週の月曜との差（ミリ秒）を1週間で割って weekOffset を求める。
+      const ymd = parseYMD($("date").value);
+      if (ymd) {
+        const sentMonday = mondayOf(ymd.y, ymd.m, ymd.d);
+        const todayMonday = mondayOf(
+          new Date().getFullYear(),
+          new Date().getMonth() + 1,
+          new Date().getDate()
+        );
+        weekOffset = Math.round((sentMonday - todayMonday) / 604800000);
+      } else {
+        // 日付が解釈できなければ従来どおり今週へ戻す
+        weekOffset = 0;
+      }
       await loadRecords();
     } catch (err) {
       showMsg("送信に失敗しました。通信環境を確認してください。", "err");
@@ -525,6 +829,17 @@
   addRow(); // 最初の1行
   $("addRowBtn").addEventListener("click", addRow);
   $("submitBtn").addEventListener("click", submit);
+
+  // 週の切り替え（再fetchせず手元のallRecordsから描画し直す）
+  $("weekPrevBtn").addEventListener("click", function () {
+    weekOffset--;
+    renderCurrentWeek();
+  });
+  $("weekNextBtn").addEventListener("click", function () {
+    weekOffset++;
+    renderCurrentWeek();
+  });
+
   loadRecords();
 </script>
 </body>

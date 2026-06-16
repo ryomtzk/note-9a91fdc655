@@ -300,7 +300,6 @@
     gap: 12px;
     flex-wrap: wrap;
   }
-  .set-index { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
   /* 週ナビ */
   .week-nav {
@@ -429,7 +428,7 @@
       </div>
       <div class="set-lines"></div>
       <button type="button" class="add-set" aria-label="セットを追加">
-        <span class="plus">＋</span> もう1セット
+        <span class="plus">＋</span> 他のセット
       </button>`;
     $("rows").appendChild(div);
 
@@ -560,9 +559,8 @@
       g.exercises[g.exIndex[exKey]].sets.push(r);
     });
 
-    // allRecords は新しい順。各種目内のセットは入力順（古い→新しい）にして
-    // 「1セット目」が最初に入れたセットを指すようにする。
-    // グループ（日・人）や種目の並び自体は新しい順のまま変えない。
+    // allRecords は新しい順。各種目内のセットは入力順（古い→新しい）で
+    // 並ぶようにする。グループ（日・人）や種目の並び自体は新しい順のまま変えない。
     groups.forEach(function (g) {
       g.exercises.forEach(function (ex) {
         ex.sets.reverse();
@@ -598,14 +596,13 @@
   }
 
   // 種目内のセット1行
-  function renderSetRow(s, i) {
+  function renderSetRow(s) {
     // null / undefined / 空文字 はまとめて "-" に（GASがフィールドを省略する場合に備える）
     const weight = (s.weight == null || s.weight === "") ? "-" : s.weight;
     const reps = (s.reps == null || s.reps === "") ? "-" : s.reps;
     const sets = (s.sets == null || s.sets === "") ? "-" : s.sets;
     return `
       <div class="set-row">
-        <span class="set-index">${i + 1}セット目</span>
         <div class="item-stats">
           <span><b>${escapeHtml(String(weight))}</b> kg</span>
           <span><b>${escapeHtml(String(reps))}</b> レップ</span>

@@ -82,6 +82,52 @@
     min-height: 44px;
   }
 
+  /* 部位（その日に狙った部位。種目より上位の、日単位の属性） */
+  .parts-section { margin-bottom: 18px; }
+  .parts-section > label { display: block; margin-bottom: 8px; }
+  /* 部位ボックスを縦並びにするコンテナ */
+  .parts-list { display: flex; flex-direction: column; gap: 8px; }
+  /* 部位1つ分の入力行（テキストボックス＋✕削除ボタン） */
+  .part-line { position: relative; }
+  .part-line input { padding-right: 36px; }
+  .part-del {
+    position: absolute;
+    top: 50%;
+    right: 10px;
+    transform: translateY(-50%);
+    background: var(--surface);
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    width: 18px;
+    height: 18px;
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+  }
+  .part-del:hover { color: var(--danger); border-color: var(--danger); }
+  .part-del:disabled { opacity: 0; pointer-events: none; }
+
+  /* 部位を追加するボタン（セットを追加と同じ一回り小さい見た目） */
+  .add-part {
+    width: 100%;
+    background: transparent;
+    border: 1px dashed var(--line);
+    border-radius: 8px;
+    color: var(--muted);
+    padding: 8px;
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    margin-top: 8px;
+  }
+  .add-part:hover { border-color: var(--accent); color: var(--accent); }
+  .add-part .plus { color: var(--accent); font-weight: 800; }
+
   /* 種目の1行 */
   .row {
     position: relative;
@@ -264,6 +310,29 @@
   .group-date { font-size: 14px; font-weight: 700; color: var(--text); }
   .group-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
 
+  /* 部位チップを並べる行（名前・日付の下に控えめに表示する） */
+  .group-parts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 0 16px 10px;
+    background: var(--surface-2);
+    border-bottom: 1px solid var(--line);
+  }
+  /* 部位チップ。.who（アクセント色）とは別系統の控えめな配色 */
+  .part-tag {
+    display: inline-block;
+    background: var(--surface-2);
+    color: var(--muted);
+    border: 1px solid var(--line);
+    font-size: 11px;
+    font-weight: 700;
+    padding: 3px 9px;
+    border-radius: 999px;
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+
   .group-body { padding: 4px 16px 8px; }
   .item {
     display: flex;
@@ -368,6 +437,16 @@
         <label for="date">日付</label>
         <input type="date" id="date">
       </div>
+    </div>
+
+    <!-- その日に狙った部位（日付＋名前のセッション単位の属性。任意項目） -->
+    <div class="parts-section">
+      <label>部位</label>
+      <!-- 部位の入力ボックスがここに縦に積み上がる -->
+      <div class="parts-list" id="parts"></div>
+      <button class="add-part" id="addPartBtn" type="button">
+        <span class="plus">＋</span> 部位を追加
+      </button>
     </div>
 
     <!-- 種目の行がここに積み上がる -->
@@ -504,6 +583,44 @@
     });
   }
 
+  // 部位の入力ボックスを1つ追加する（自由記述。空でも提出をブロックしない）
+  // focus が true のとき、追加したボックスにフォーカスする
+  function addPartLine(focus) {
+    const container = $("parts");
+    const line = document.createElement("div");
+    line.className = "part-line";
+    line.innerHTML = `
+      <input type="text" class="in-part" placeholder="例: 胸" autocomplete="off">
+      <button type="button" class="part-del" aria-label="この部位を削除">✕</button>`;
+    container.appendChild(line);
+
+    line.querySelector(".part-del").addEventListener("click", function () {
+      line.remove();
+      renumberParts();
+    });
+
+    renumberParts();
+
+    if (focus) {
+      line.querySelector(".in-part").focus();
+    }
+    return line;
+  }
+
+  // 部位ボックスが1つだけのときは削除ボタンを無効化（renumberSets と同じパターン）
+  function renumberParts() {
+    const lines = $("parts").querySelectorAll(".part-line");
+    lines.forEach(function (line) {
+      line.querySelector(".part-del").disabled = (lines.length === 1);
+    });
+  }
+
+  // 部位リストを空ボックス1つに戻す（送信成功後のリセット用）
+  function resetParts() {
+    $("parts").innerHTML = "";
+    addPartLine(false);
+  }
+
   // 日付欄の初期値を今日にする
   function setToday() {
     const now = new Date();
@@ -546,7 +663,15 @@
       const key = dateLabel + "|" + r.name;
       if (!(key in groupIndex)) {
         groupIndex[key] = groups.length;
-        groups.push({ date: dateLabel, name: r.name, exercises: [], exIndex: {} });
+        // parts はそのグループで最初に出会ったレコードの parts 文字列を採用する。
+        // （top-level ではなくレコード行の parts フィールドを読む。旧記録は undefined）
+        groups.push({
+          date: dateLabel,
+          name: r.name,
+          parts: r.parts,
+          exercises: [],
+          exIndex: {}
+        });
       }
       const g = groups[groupIndex[key]];
 
@@ -569,6 +694,22 @@
     return groups;
   }
 
+  // 部位チップ行のHTMLを組み立てる。
+  // parts 文字列を「、」で split → trim → 空要素除去 してからチップ化する。
+  // 部位が無い／空のグループ、parts フィールドを持たない旧記録では何も描画しない。
+  function renderParts(parts) {
+    if (!parts) return "";
+    const list = String(parts)
+      .split("、")
+      .map(function (p) { return p.trim(); })
+      .filter(function (p) { return p !== ""; });
+    if (list.length === 0) return "";
+    const chips = list.map(function (p) {
+      return `<span class="part-tag">${escapeHtml(p)}</span>`;
+    }).join("");
+    return `<div class="group-parts">${chips}</div>`;
+  }
+
   // 1グループ（同じ日・同じ人）のHTMLを組み立て
   function renderGroup(g) {
     const body = g.exercises.map(renderExerciseBlock).join("");
@@ -581,6 +722,7 @@
           </div>
           <span class="group-count">${g.exercises.length} 種目</span>
         </div>
+        ${renderParts(g.parts)}
         <div class="group-body">${body}</div>
       </div>`;
   }
@@ -760,6 +902,18 @@
     return items;
   }
 
+  // 入力済みの部位を入力順の配列で集める（trim済みの空でない文字列だけ）
+  // 「、」は送信時の連結区切り兼・表示時の分割区切りに使うため、
+  // 1ボックス内に入力された「、」は中黒「・」へ正規化し、1ボックス=1チップを保つ。
+  function collectParts() {
+    const parts = [];
+    $("parts").querySelectorAll(".in-part").forEach(function (input) {
+      const v = input.value.trim().replace(/、/g, "・");
+      if (v) parts.push(v);
+    });
+    return parts;
+  }
+
   // まとめて送信
   async function submit() {
     const items = collectItems();
@@ -775,9 +929,21 @@
       return;
     }
 
+    // 部位はその日（日付＋名前）単位の属性。配列で集めておく。
+    const parts = collectParts();
+    // 行ベース保存（1行=1セット）で往復させるため、各itemにも部位を持たせる。
+    // 配列を「、」（読点）で連結した文字列にして付与する。
+    // ※GAS側で parts 列の保存・返却対応が必要（未対応でも下記は無害）。
+    const partsStr = parts.join("、");
+    items.forEach(function (item) {
+      item.parts = partsStr;
+    });
+
     const payload = {
       name: $("name").value,
       date: $("date").value,
+      // top-level parts は後方互換用（配列のまま送る）
+      parts: parts,
       items: items
     };
 
@@ -798,6 +964,8 @@
       // 行をリセットして1行だけに戻す（名前と日付は残す）
       $("rows").innerHTML = "";
       addRow();
+      // 部位も空ボックス1つに戻す（名前と日付は残す）
+      resetParts();
       // 送信した日付が属する週を表示して、登録直後の記録が見えるようにする。
       // 今日の週の月曜との差（ミリ秒）を1週間で割って weekOffset を求める。
       const ymd = parseYMD($("date").value);
@@ -824,7 +992,11 @@
   // 初期化
   setToday();
   addRow(); // 最初の1行
+  addPartLine(false); // 部位の空ボックスを1つ用意する
   $("addRowBtn").addEventListener("click", addRow);
+  $("addPartBtn").addEventListener("click", function () {
+    addPartLine(true);
+  });
   $("submitBtn").addEventListener("click", submit);
 
   // 週の切り替え（再fetchせず手元のallRecordsから描画し直す）
